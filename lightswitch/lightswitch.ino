@@ -4,6 +4,7 @@
 #include <WiFiClient.h>
 #include <SPI.h>
 #include <TFT_eSPI.h>
+#include <ArduinoJson.h>
 
 #define SSID			"Why-Phi"
 #define PASSWORD		"Pizz4Pizz4"
@@ -13,31 +14,47 @@
 
 TFT_eSPI tft = TFT_eSPI();
 
+#define DEBUG			0
+
 #define CALIBRATION_FILE	"/TouchCalData3"
 #define REPEAT_CAL		false
 
-#define NUM_ROOMS		5
+#define NUM_ROOMS		6
+#define ROOM_ID_MASTER		0
 #define ROOM_ID_LIVING_ROOM	1
 #define ROOM_ID_BEDROOM		2
 #define ROOM_ID_DESK		3
 #define ROOM_ID_DEN		5
 #define ROOM_ID_HALLWAY		6
 
+#define BUTTON_WIDTH		140
+#define BUTTON_HEIGHT		70
+
+#define TEXT_MARGIN		20
+
+#define RED_WIDTH		BUTTON_WIDTH / 2
+#define RED_HEIGHT		BUTTON_HEIGHT - TEXT_MARGIN
+#define GREEN_WIDTH		BUTTON_WIDTH / 2
+#define GREEN_HEIGHT		BUTTON_HEIGHT - TEXT_MARGIN
+
+#define COLUMN			160
+#define MARGIN_X		10
+#define MARGIN_Y		7
+
+#define POLL_INTERVAL		1000	// milliseconds
+HTTPClient poll_http;
+int poll_ms_cur;
+int poll_ms_prev;
 
 struct button {
+	char name[64];
 	boolean on;
 	int x;
 	int y;
-	int width;
-	int height;
 	int r_x;
 	int r_y;
-	int r_width;
-	int r_height;
 	int g_x;
 	int g_y;
-	int g_width;
-	int g_height;
 	int hue_id;
 };
 
@@ -46,21 +63,16 @@ struct button button_list[NUM_ROOMS];
 // Comment out to stop drawing black spots
 #define BLACK_SPOT
 
-void init_button(int id, int x, int y, int width, int height, int hue_id)
+void init_button(int id, int x, int y, int hue_id, char *name)
 {
+	sprintf(button_list[id].name, name);
 	button_list[id].on = false;
 	button_list[id].x = x;
 	button_list[id].y = y;
-	button_list[id].width = width;
-	button_list[id].height = height;
 	button_list[id].r_x = x;
-	button_list[id].r_y = y;
-	button_list[id].r_width = width / 2;
-	button_list[id].r_height = height;
-	button_list[id].g_x = x + width / 2;
-	button_list[id].g_y = y;
-	button_list[id].g_width = width / 2;
-	button_list[id].g_height = height;
+	button_list[id].r_y = y + TEXT_MARGIN;
+	button_list[id].g_x = x + BUTTON_WIDTH / 2;
+	button_list[id].g_y = y + TEXT_MARGIN;
 	button_list[id].hue_id = hue_id;
 }
 
@@ -88,16 +100,80 @@ void setup(void)
 
 	tft.fillScreen(TFT_BLACK);
 
-	init_button(0, 50, 30, 150, 30, ROOM_ID_BEDROOM);
-	init_button(1, 50, 70, 150, 30, ROOM_ID_DESK);
-	init_button(2, 50, 110, 150, 30, ROOM_ID_HALLWAY);
-	init_button(3, 50, 150, 150, 30, ROOM_ID_LIVING_ROOM);
-	init_button(4, 50, 190, 150, 30, ROOM_ID_DEN);
-
-	Serial.println("Initializing buttons");
+	init_button(0, MARGIN_X, 1 * MARGIN_Y, ROOM_ID_MASTER, "Master");
+	init_button(1, MARGIN_X, 2 * MARGIN_Y + 1 * BUTTON_HEIGHT, ROOM_ID_BEDROOM, "Bedroom");
+	init_button(2, MARGIN_X, 3 * MARGIN_Y + 2 * BUTTON_HEIGHT, ROOM_ID_DESK, "Desk");
+	init_button(3, COLUMN, 1 * MARGIN_Y, ROOM_ID_HALLWAY, "Hallway");
+	init_button(4, COLUMN, 2 * MARGIN_Y + 1 * BUTTON_HEIGHT, ROOM_ID_LIVING_ROOM, "Living Room");
+	init_button(5, COLUMN, 3 * MARGIN_Y + 2 * BUTTON_HEIGHT, ROOM_ID_DEN, "Den");
 
 	draw_buttons();
-	Serial.println("Drew buttons");
+}
+
+void poll_state()
+{
+	int i;
+	int diff;
+	int httpCode;
+	char req[2048];
+	bool room_on;
+	bool master_on;
+
+	const size_t capacity = JSON_ARRAY_SIZE(0) + JSON_ARRAY_SIZE(1) +
+		JSON_OBJECT_SIZE(2) + JSON_OBJECT_SIZE(3) +
+		JSON_OBJECT_SIZE(8) + 150;
+
+	poll_ms_cur = millis();
+	diff = poll_ms_cur - poll_ms_prev;
+
+	if (diff < POLL_INTERVAL)
+		return;
+
+	DynamicJsonBuffer jsonBuffer(capacity);
+	poll_ms_prev = poll_ms_cur;
+
+	// Turn on master switch if any rooms have lights on
+	master_on = false;
+	for (i = 1; i <= NUM_ROOMS - 1; i++) {
+		sprintf(req, "http://%s/api/%s/groups/%d/",
+			HUE_IP, API_KEY, button_list[i].hue_id);
+
+		if (poll_http.begin(req)) {
+			httpCode = poll_http.GET();
+
+			if (httpCode > 0) {
+				if (httpCode == HTTP_CODE_OK ||
+				    httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
+					JsonObject& root = jsonBuffer.parseObject(poll_http.getString());
+					room_on = root["state"]["any_on"];
+
+					if (room_on)
+						master_on = true;
+
+#if DEBUG
+					Serial.printf("%s: %d\n", button_list[i].name, room_on);
+#endif
+					if (button_list[i].on != room_on) {
+						if (room_on)
+							draw_button_green(i);
+						else
+							draw_button_red(i);
+					}
+
+				}
+			} else {
+#if DEBUG
+				Serial.println("HTTP request failed");
+#endif
+			}
+			poll_http.end();
+		}
+	}
+
+	if (master_on)
+		draw_button_green(0);
+	else
+		draw_button_red(0);
 }
 
 void draw_buttons(void)
@@ -128,8 +204,8 @@ int button_pressed(int x, int y)
 
 	for (i = 0; i < NUM_ROOMS; i++) {
 		btn = &button_list[i];
-		if ((x > btn->x && x < (btn->x + btn->width))&&
-		    (y > btn->y && y < (btn->y + btn->height))) {
+		if ((x > btn->x && x < (btn->x + BUTTON_WIDTH))&&
+		    (y > btn->y && y < (btn->y + BUTTON_HEIGHT))) {
 			return i;
 		}
 	}
@@ -158,6 +234,7 @@ void loop()
 			}
 		}
 	}
+	poll_state();
 }
 
 void touch_calibrate()
@@ -226,11 +303,21 @@ void draw_frame(int id)
 {
 	tft.drawRect(button_list[id].x,
 		button_list[id].y,
-		button_list[id].width,
-		button_list[id].height,
+		BUTTON_WIDTH,
+		BUTTON_HEIGHT,
 		TFT_BLACK);
+	tft.drawRect(button_list[id].x,
+		button_list[id].y,
+		BUTTON_WIDTH,
+		TEXT_MARGIN,
+		TFT_DARKGREY);
+	tft.setTextColor(TFT_WHITE);
+	tft.setTextSize(2);
+	tft.setTextDatum(MC_DATUM);
+	tft.drawString(button_list[id].name,
+		button_list[id].x + BUTTON_WIDTH / 2,
+		button_list[id].y + BUTTON_HEIGHT / 2);
 }
-
 
 void toggle_light(int id, int state)
 {
@@ -241,23 +328,25 @@ void toggle_light(int id, int state)
 
 	sprintf(req, "http://%s/api/%s/groups/%d/action",
 		HUE_IP, API_KEY, button_list[id].hue_id);
+
 	sprintf(data, "{\"on\":%s}", state ? "true" : "false");
 
-	Serial.println("Starting HTTP");
 	if (http.begin(client, req)) {
-		Serial.println("Sending PUT request");
+#if DEBUG
+		Serial.printf("Turning %s %s\n", button_list[id].name, state ? "on" : "off");
+#endif
 
 		int httpCode = http.sendRequest("PUT", data);
 
 		if (httpCode > 0) {
-			Serial.printf("Get code: %d\n", httpCode);
-
 			if (httpCode == HTTP_CODE_OK ||
 			    httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
 				Serial.println(http.getString());
 			}
 		} else {
+#if DEBUG
 			Serial.println("HTTP request failed");
+#endif
 		}
 		http.end();
 	}
@@ -269,14 +358,9 @@ void draw_button_red(int id)
 
 	btn = &button_list[id];
 
-	tft.fillRect(btn->r_x, btn->r_y, btn->r_width, btn->r_height, TFT_RED);
-	tft.fillRect(btn->g_x, btn->g_y, btn->g_width, btn->g_height, TFT_DARKGREY);
+	tft.fillRect(btn->r_x, btn->r_y, RED_WIDTH, RED_HEIGHT, TFT_RED);
+	tft.fillRect(btn->g_x, btn->g_y, GREEN_WIDTH, GREEN_HEIGHT, TFT_DARKGREY);
 	draw_frame(id);
-	tft.setTextColor(TFT_WHITE);
-	tft.setTextSize(2);
-	tft.setTextDatum(MC_DATUM);
-//	tft.drawString("On", B1_G_X + (B1_G_W / 2), B1_G_Y + (B1_G_H / 2));
-	tft.drawString("On", btn->g_x, btn->g_y);
 	btn->on = false;
 }
 
@@ -286,13 +370,8 @@ void draw_button_green(int id)
 
 	btn = &button_list[id];
 
-	tft.fillRect(btn->r_x, btn->r_y, btn->r_width, btn->r_height, TFT_DARKGREY);
-	tft.fillRect(btn->g_x, btn->g_y, btn->g_width, btn->g_height, TFT_GREEN);
+	tft.fillRect(btn->r_x, btn->r_y, RED_WIDTH, RED_HEIGHT, TFT_DARKGREY);
+	tft.fillRect(btn->g_x, btn->g_y, GREEN_WIDTH, GREEN_HEIGHT, TFT_GREEN);
 	draw_frame(id);
-	tft.setTextColor(TFT_WHITE);
-	tft.setTextSize(2);
-	tft.setTextDatum(MC_DATUM);
-//	tft.drawString("Off", B1_R_X + (B1_R_W / 2) + 1, B1_R_Y + (B1_R_H / 2));
-	tft.drawString("Off", btn->r_x + btn->r_width / 2, btn->r_y + btn->r_height / 2);
 	btn->on = true;
 }
