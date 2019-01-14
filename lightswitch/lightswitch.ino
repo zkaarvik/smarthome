@@ -305,12 +305,12 @@ void draw_frame(int id)
 		button_list[id].y,
 		BUTTON_WIDTH,
 		BUTTON_HEIGHT,
-		TFT_DARKGREY);
+		TFT_BLACK);
 	tft.drawRect(button_list[id].x,
 		button_list[id].y,
 		BUTTON_WIDTH,
 		TEXT_MARGIN,
-		TFT_DARKGREY);
+		TFT_BLACK);
 	tft.setTextColor(TFT_WHITE);
 	tft.setTextSize(2);
 	tft.setTextDatum(MC_DATUM);
