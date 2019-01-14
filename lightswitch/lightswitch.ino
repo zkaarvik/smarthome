@@ -305,7 +305,7 @@ void draw_frame(int id)
 		button_list[id].y,
 		BUTTON_WIDTH,
 		BUTTON_HEIGHT,
-		TFT_BLACK);
+		TFT_DARKGREY);
 	tft.drawRect(button_list[id].x,
 		button_list[id].y,
 		BUTTON_WIDTH,
@@ -316,7 +316,7 @@ void draw_frame(int id)
 	tft.setTextDatum(MC_DATUM);
 	tft.drawString(button_list[id].name,
 		button_list[id].x + BUTTON_WIDTH / 2,
-		button_list[id].y + BUTTON_HEIGHT / 2);
+		button_list[id].y + 10);
 }
 
 void toggle_light(int id, int state)
