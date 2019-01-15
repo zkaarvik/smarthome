@@ -42,9 +42,14 @@ TFT_eSPI tft = TFT_eSPI();
 #define MARGIN_Y		7
 
 #define POLL_INTERVAL		1000	// milliseconds
+#define DEBOUNCE_INTERVAL	500
 HTTPClient poll_http;
+
 int poll_ms_cur;
 int poll_ms_prev;
+
+int debounce_ms_cur;
+int debounce_ms_prev;
 
 struct button {
 	char name[64];
@@ -204,7 +209,7 @@ int button_pressed(int x, int y)
 
 	for (i = 0; i < NUM_ROOMS; i++) {
 		btn = &button_list[i];
-		if ((x > btn->x && x < (btn->x + BUTTON_WIDTH))&&
+		if ((x > btn->x && x < (btn->x + BUTTON_WIDTH)) &&
 		    (y > btn->y && y < (btn->y + BUTTON_HEIGHT))) {
 			return i;
 		}
@@ -217,8 +222,16 @@ void loop()
 {
 	uint16_t x, y;
 	int id;
+	int diff;
 
 	if (tft.getTouch(&x, &y)) {
+		debounce_ms_cur = millis();
+		diff = debounce_ms_cur - debounce_ms_prev;
+		if (diff < DEBOUNCE_INTERVAL)
+			return;
+
+		debounce_ms_prev = debounce_ms_cur;
+
 #ifdef BLACK_SPOT
 		tft.fillCircle(x, y, 2, TFT_BLACK);
 #endif
