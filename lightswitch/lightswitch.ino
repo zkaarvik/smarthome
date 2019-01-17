@@ -43,6 +43,10 @@ TFT_eSPI tft = TFT_eSPI();
 
 #define POLL_INTERVAL		1000	// milliseconds
 #define DEBOUNCE_INTERVAL	500
+
+#define BACKLIGHT_PIN		5
+#define BACKLIGHT_TIMEOUT	10000
+
 HTTPClient poll_http;
 
 int poll_ms_cur;
@@ -50,6 +54,10 @@ int poll_ms_prev;
 
 int debounce_ms_cur;
 int debounce_ms_prev;
+
+int backlight_on;
+int backlight_ms_cur;
+int backlight_ms_prev;
 
 struct button {
 	char name[64];
@@ -113,6 +121,12 @@ void setup(void)
 	init_button(5, COLUMN, 3 * MARGIN_Y + 2 * BUTTON_HEIGHT, ROOM_ID_DEN, "Den");
 
 	draw_buttons();
+
+	pinMode(BACKLIGHT_PIN, OUTPUT);
+	digitalWrite(BACKLIGHT_PIN, 1);
+	backlight_on = 1;
+	backlight_ms_cur = millis();
+	backlight_ms_prev = backlight_ms_cur;
 }
 
 void poll_state()
@@ -224,8 +238,10 @@ void loop()
 	int id;
 	int diff;
 
+	backlight_ms_cur = millis();
 	if (tft.getTouch(&x, &y)) {
-		debounce_ms_cur = millis();
+		/* Use backlight time to avoid calling millis() again */
+		debounce_ms_cur = backlight_ms_cur;
 		diff = debounce_ms_cur - debounce_ms_prev;
 		if (diff < DEBOUNCE_INTERVAL)
 			return;
@@ -235,19 +251,33 @@ void loop()
 #ifdef BLACK_SPOT
 		tft.fillCircle(x, y, 2, TFT_BLACK);
 #endif
+		backlight_ms_prev = backlight_ms_cur;
 
-		id = button_pressed(x, y);
-		if (id >= 0) {
-			if (button_list[id].on) {
-				toggle_light(id, 0);
-				draw_button_red(id);
-			} else {
-				toggle_light(id, 1);
-				draw_button_green(id);
+		/* First press after idle only turns on backlight */
+		if (backlight_on == 0) {
+			digitalWrite(BACKLIGHT_PIN, 1);
+			backlight_on = 1;
+		} else {
+			id = button_pressed(x, y);
+			if (id >= 0) {
+				if (button_list[id].on) {
+					toggle_light(id, 0);
+					draw_button_red(id);
+				} else {
+					toggle_light(id, 1);
+					draw_button_green(id);
+				}
 			}
 		}
 	}
-	poll_state();
+
+	if (backlight_ms_cur - backlight_ms_prev > BACKLIGHT_TIMEOUT) {
+		backlight_on = 0;
+		digitalWrite(BACKLIGHT_PIN, 0);
+	}
+
+	if (backlight_on)
+		poll_state();
 }
 
 void touch_calibrate()
@@ -351,16 +381,16 @@ void toggle_light(int id, int state)
 
 		int httpCode = http.sendRequest("PUT", data);
 
+#if DEBUG
 		if (httpCode > 0) {
 			if (httpCode == HTTP_CODE_OK ||
 			    httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
 				Serial.println(http.getString());
 			}
 		} else {
-#if DEBUG
 			Serial.println("HTTP request failed");
-#endif
 		}
+#endif
 		http.end();
 	}
 }
