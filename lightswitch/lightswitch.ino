@@ -41,10 +41,11 @@ TFT_eSPI tft = TFT_eSPI();
 #define MARGIN_X		10
 #define MARGIN_Y		7
 
-#define POLL_INTERVAL		1000	// milliseconds
+#define POLL_INTERVAL		1000		// milliseconds
 #define DEBOUNCE_INTERVAL	500
 
-#define BACKLIGHT_PIN		5
+#define BACKLIGHT_PIN		5		// D1
+#define MOTION_SENSOR_PIN	16		// D0
 #define BACKLIGHT_TIMEOUT	10000
 
 HTTPClient poll_http;
@@ -123,7 +124,10 @@ void setup(void)
 	draw_buttons();
 
 	pinMode(BACKLIGHT_PIN, OUTPUT);
+	pinMode(MOTION_SENSOR_PIN, INPUT);
+
 	digitalWrite(BACKLIGHT_PIN, 1);
+
 	backlight_on = 1;
 	backlight_ms_cur = millis();
 	backlight_ms_prev = backlight_ms_cur;
@@ -237,11 +241,22 @@ void loop()
 	uint16_t x, y;
 	int id;
 	int diff;
+	int cur_time;
+	int sensor_val;
 
-	backlight_ms_cur = millis();
+	cur_time = millis();
+	backlight_ms_cur = cur_time;
+
+	/* Turn on display backlight when motion detected */
+	sensor_val = digitalRead(MOTION_SENSOR_PIN);
+	if (sensor_val == HIGH && backlight_on == 0) {
+		digitalWrite(BACKLIGHT_PIN, 1);
+		backlight_on = 1;
+		backlight_ms_prev = backlight_ms_cur;
+	}
+
 	if (tft.getTouch(&x, &y)) {
-		/* Use backlight time to avoid calling millis() again */
-		debounce_ms_cur = backlight_ms_cur;
+		debounce_ms_cur = cur_time;
 		diff = debounce_ms_cur - debounce_ms_prev;
 		if (diff < DEBOUNCE_INTERVAL)
 			return;
@@ -251,22 +266,14 @@ void loop()
 #ifdef BLACK_SPOT
 		tft.fillCircle(x, y, 2, TFT_BLACK);
 #endif
-		backlight_ms_prev = backlight_ms_cur;
-
-		/* First press after idle only turns on backlight */
-		if (backlight_on == 0) {
-			digitalWrite(BACKLIGHT_PIN, 1);
-			backlight_on = 1;
-		} else {
-			id = button_pressed(x, y);
-			if (id >= 0) {
-				if (button_list[id].on) {
-					toggle_light(id, 0);
-					draw_button_red(id);
-				} else {
-					toggle_light(id, 1);
-					draw_button_green(id);
-				}
+		id = button_pressed(x, y);
+		if (id >= 0) {
+			if (button_list[id].on) {
+				toggle_light(id, 0);
+				draw_button_red(id);
+			} else {
+				toggle_light(id, 1);
+				draw_button_green(id);
 			}
 		}
 	}
